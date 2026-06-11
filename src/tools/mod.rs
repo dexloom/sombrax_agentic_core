@@ -73,7 +73,7 @@
 //!
 //! ## Sub-Agent Execution with AgentRuntime
 //!
-//! The TaskTool requires an [`AgentRuntime`](agent::AgentRuntime) to spawn sub-agents.
+//! The TaskTool requires an [`AgentRuntime`] to spawn sub-agents.
 //! Without a configured runtime, the tool returns an error.
 //!
 //! ```rust,no_run
@@ -170,7 +170,7 @@ impl<T: registry::Tool> crate::tool::ToolDyn for ToolBridge<T> {
     }
 }
 
-/// Convert a registry Tool to an Arc<dyn ToolDyn> for use with Agent.
+/// Convert a registry Tool to an `Arc<dyn ToolDyn>` for use with Agent.
 ///
 /// This allows using any tool that implements `sombrax_agentic_core::tools::registry::Tool`
 /// with the Agent's tool execution system.

@@ -174,7 +174,7 @@ pub fn into_dyn<T: Tool>(tool: T) -> Box<dyn ToolDyn> {
     Box::new(ToolWrapper(tool))
 }
 
-/// Convert a Tool into an Arc<dyn ToolDyn> for use with agents
+/// Convert a Tool into an `Arc<dyn ToolDyn>` for use with agents
 pub fn into_arc_dyn<T: Tool>(tool: T) -> std::sync::Arc<dyn ToolDyn> {
     std::sync::Arc::new(ToolWrapper(tool))
 }

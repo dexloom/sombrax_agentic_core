@@ -2,15 +2,15 @@
 //!
 //! ## Layout
 //!
-//! - [`model`] — plain-data domain types (Job, Bundle, Pipeline, Edge, statuses, ids).
-//! - [`error`] — `StoreError`, `PipelineValidationError`.
-//! - [`store`] — `Store` trait + `InMemoryStore` impl + reusable conformance suite.
-//! - [`pipeline`] — `PipelineBuilder` with build-time validation.
-//! - [`registry`] — `HandlerRegistry` (kind → `Arc<dyn JobHandler>`).
-//! - [`handler`] — `JobHandler` trait, `JobContext`, `JobOutput`, `JobError`.
-//! - [`log`] — `LogWriter` bridging `Store::append_log` and `tracing`.
-//! - [`worker`] — dispatcher / orphan / cancel-sweep loops.
-//! - [`runtime`] — public façade.
+//! - `model` — plain-data domain types (Job, Bundle, Pipeline, Edge, statuses, ids).
+//! - `error` — `StoreError`, `PipelineValidationError`.
+//! - `store` — `Store` trait + `InMemoryStore` impl + reusable conformance suite.
+//! - `pipeline` — `PipelineBuilder` with build-time validation.
+//! - `registry` — `HandlerRegistry` (kind → `Arc<dyn JobHandler>`).
+//! - `handler` — `JobHandler` trait, `JobContext`, `JobOutput`, `JobError`.
+//! - `log` — `LogWriter` bridging `Store::append_log` and `tracing`.
+//! - `worker` — dispatcher / orphan / cancel-sweep loops.
+//! - `runtime` — public façade.
 
 pub mod error;
 pub mod handler;

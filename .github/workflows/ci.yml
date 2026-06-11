@@ -44,9 +44,7 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
-      # Build the docs as a smoke check. We do not pass `-D warnings` here:
-      # docs.rs itself does not fail on intra-doc-link warnings, and the crate
-      # currently carries a few such warnings. This step still catches hard
-      # rustdoc build failures.
       - name: rustdoc
         run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"

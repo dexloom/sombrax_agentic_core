@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-11
+
+### Fixed
+
+- Resolved all rustdoc intra-doc-link and unclosed-HTML-tag warnings in the
+  public API docs. `cargo doc` is now warning-free, and CI enforces it with
+  `-D warnings`.
+
+### Changed
+
+- First release shipped through the automated GitHub Actions release pipeline
+  (tag `vX.Y.Z` → publish to crates.io).
+
 ## [0.1.0] - 2026-06-10
 
 Initial public release of SombraX Agentic Core (`sombrax_agentic_core`).
@@ -35,5 +48,6 @@ Initial public release of SombraX Agentic Core (`sombrax_agentic_core`).
 - **Observability** — OpenTelemetry metrics and tracing.
 - **Examples** — nine runnable, provider-agnostic showcases under `examples/`.
 
-[Unreleased]: https://github.com/dexloom/sombrax_agentic_core/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dexloom/sombrax_agentic_core/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/dexloom/sombrax_agentic_core/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dexloom/sombrax_agentic_core/releases/tag/v0.1.0

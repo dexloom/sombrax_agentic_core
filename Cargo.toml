@@ -1,6 +1,6 @@
 [package]
 name = "sombrax_agentic_core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "SombraX Agentic Core (SAC) — a provider-agnostic Rust library for building LLM agents: content-modifying hooks, tool/MCP integration, and context optimization."
 authors = ["SombraX Agentic Core contributors"]

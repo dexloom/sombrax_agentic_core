@@ -18,7 +18,7 @@ pub enum ChatTemplate {
     /// Minimax M2.5+ template format
     /// Uses standard OpenAI request format (tool_calls in field, "assistant" role, "tool" role)
     /// Server-side Jinja template handles Minimax-specific rendering
-    /// Response parsing handles XML tool calls and <think> reasoning blocks
+    /// Response parsing handles XML tool calls and `<think>` reasoning blocks
     Minimax25,
     /// ChatML template format (IQuest, Qwen 1/2.x, etc.)
     /// Uses <|im_start|> and <|im_end|> delimiters with XML tool formatting

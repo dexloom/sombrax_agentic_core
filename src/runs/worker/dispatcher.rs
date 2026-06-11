@@ -7,7 +7,7 @@
 //! 3. Spawn a `tokio::task` that runs `handler.run(ctx)` with the handler's optional
 //!    timeout, then calls `complete_job_and_propagate(ticket, terminal)` exactly once.
 //!
-//! Cancellation is handled by [`super::cancel_sweep::CancelSweep`] — that's a separate
+//! Cancellation is handled by `super::cancel_sweep::CancelSweep` — that's a separate
 //! task so the hot dispatch path doesn't pay the scan cost.
 
 use std::sync::Arc;

@@ -1,8 +1,8 @@
 //! Background workers that drive the runtime.
 //!
-//! - [`dispatcher::DispatchWorker`]: pulls Queued jobs and runs handlers.
-//! - [`orphan::OrphanWorker`]: re-finalises Running jobs that exceeded their timeout.
-//! - [`cancel_sweep::CancelSweep`]: invokes `handler.cancel` for `cancel_run`-marked rows.
+//! - `dispatcher::DispatchWorker`: pulls Queued jobs and runs handlers.
+//! - `orphan::OrphanWorker`: re-finalises Running jobs that exceeded their timeout.
+//! - `cancel_sweep::CancelSweep`: invokes `handler.cancel` for `cancel_run`-marked rows.
 
 pub mod cancel_sweep;
 pub mod dispatcher;

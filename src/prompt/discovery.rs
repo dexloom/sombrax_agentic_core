@@ -161,7 +161,7 @@ async fn discover_in_directory(path: PathBuf) -> Result<Vec<SystemPrompt>, Promp
 /// Default prompt search paths (not sombrax-specific).
 ///
 /// Returns `./.sac/prompts`, `~/.sac/prompts`, `~/.sombra/prompts` — mirrors
-/// [`sombrax_agentic_core::skill::default_search_paths`].
+/// `sombrax_agentic_core::skill::default_search_paths`.
 pub fn default_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 

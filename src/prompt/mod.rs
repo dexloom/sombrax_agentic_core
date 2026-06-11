@@ -1,11 +1,11 @@
 //! System prompt assets — first-class, on-disk prompt files with a
 //! deterministic name-based resolution ladder.
 //!
-//! A [`SystemPrompt`] is a named markdown file with optional YAML
+//! A `SystemPrompt` is a named markdown file with optional YAML
 //! frontmatter (`description` only, for catalog listings). The
-//! [`PromptRegistry`] discovers prompt files in layered search paths and
-//! resolves requested names via a hash-strip ladder (see
-//! [`discovery`](self::discovery)).
+//! `PromptRegistry` discovers prompt files in layered search paths and
+//! resolves requested names via a hash-strip ladder (see the
+//! `discovery` module).
 
 mod discovery;
 mod error;
@@ -54,7 +54,7 @@ impl SystemPrompt {
     ///
     /// The file stem becomes the prompt name; optional YAML frontmatter may
     /// set `description`. Validation happens here: names and bodies that
-    /// violate [`validate_prompt_name`]/non-empty-body are rejected.
+    /// violate `validate_prompt_name`/non-empty-body are rejected.
     pub async fn from_path(path: PathBuf) -> Result<Self, PromptError> {
         if !path.is_file() {
             return Err(PromptError::invalid(path.clone(), "not a regular file"));
