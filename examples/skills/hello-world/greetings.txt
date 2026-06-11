@@ -1,0 +1,8 @@
+English: Hello!
+Spanish: ¡Hola!
+French: Bonjour!
+German: Guten Tag!
+Italian: Ciao!
+Japanese: こんにちは (Konnichiwa)
+Chinese: 你好 (Nǐ hǎo)
+Russian: Привет (Privet)

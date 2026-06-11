@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: test / ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pin to the MSRV and track stable so regressions on either surface.
+        toolchain: ["1.92.0", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --all-features --all-targets
+      - name: Test
+        run: cargo test --all-features
+
+  lint:
+    name: fmt + clippy + docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable + rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+      # Build the docs as a smoke check. We do not pass `-D warnings` here:
+      # docs.rs itself does not fail on intra-doc-link warnings, and the crate
+      # currently carries a few such warnings. This step still catches hard
+      # rustdoc build failures.
+      - name: rustdoc
+        run: cargo doc --all-features --no-deps

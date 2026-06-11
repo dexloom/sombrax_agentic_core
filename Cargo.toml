@@ -1,0 +1,160 @@
+[package]
+name = "sombrax_agentic_core"
+version = "0.1.0"
+edition = "2021"
+description = "SombraX Agentic Core (SAC) — a provider-agnostic Rust library for building LLM agents: content-modifying hooks, tool/MCP integration, and context optimization."
+authors = ["SombraX Agentic Core contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dexloom/sombrax_agentic_core"
+homepage = "https://github.com/dexloom/sombrax_agentic_core"
+documentation = "https://docs.rs/sombrax_agentic_core"
+readme = "README.md"
+keywords = ["llm", "agent", "hooks", "mcp", "opentelemetry"]
+categories = ["api-bindings", "asynchronous"]
+rust-version = "1.92"
+# Keep development-only material out of the published .crate tarball.
+exclude = [".github", ".gitignore", "clippy.toml", "rustfmt.toml"]
+
+[lib]
+name = "sombrax_agentic_core"
+path = "src/lib.rs"
+
+# Build docs.rs with every feature so the gated modules (runs, provider extras)
+# are documented. `--cfg docsrs` lets the crate opt into nightly doc niceties.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.50", features = ["full", "process"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# HTTP client for provider APIs
+reqwest = { version = "0.13", features = ["json", "hickory-dns", "stream"] }
+
+# Streaming utilities (SSE parsing)
+futures-util = "0.3"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Tracing and observability
+tracing = "0.1"
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+
+# MCP protocol
+rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-worker"] }
+
+# UUID for request IDs
+uuid = { version = "1.19", features = ["v4", "serde"] }
+
+# Async trait support (from sac-providers/sac-tools)
+async-trait = "0.1"
+
+# Regex (from sac-providers/sac-tools)
+regex = "1.0"
+
+# JSON Schema generation (from sac-tools)
+schemars = "1"
+
+# Gitignore-aware file walking for glob tool (from sac-tools)
+ignore = "0.4"
+
+# Glob pattern matching (from sac-tools)
+glob = "0.3"
+
+# Chrono for timestamps (from sac-tools)
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTML entity decoding (from sac-tools)
+html-escape = "0.2"
+
+# Temp file for atomic writes (from sac-tools)
+tempfile = "3.26"
+
+# String similarity for fuzzy path matching
+strsim = "0.11"
+
+# Fast hashing for content deduplication
+blake3 = "1.5"
+
+# === runs feature (sombrax_agentic_core::runs) — pluggable pipeline/job runtime, off by default ===
+# Concurrent map for InMemoryStore.
+dashmap = { version = "6.1", optional = true }
+# RFC 9535 JSON path projection (escape hatch in OutputProjection::JsonPath).
+serde_json_path = { version = "0.7", optional = true }
+# Small set on the stack for EdgeCondition::OnTerminals.
+smallvec = { version = "1.13", features = ["serde"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM/SIGKILL for SubprocessHandler cancellation (Unix only).
+nix = { version = "0.29", features = ["signal"], optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wiremock = "0.6"
+proptest = "1.5"
+
+[features]
+default = []
+openai = []
+anthropic = []
+# Pluggable job/pipeline runtime — see src/runs/. Stays optional so consumers
+# of just the agent/hook surface don't pull in the runtime deps.
+runs = ["dep:dashmap", "dep:serde_json_path", "dep:smallvec", "dep:nix"]
+full = ["openai", "anthropic", "runs"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[[example]]
+name = "basic_agent"
+path = "examples/basic_agent.rs"
+
+[[example]]
+name = "mcp_tools"
+path = "examples/mcp_tools.rs"
+
+[[example]]
+name = "cross_agent"
+path = "examples/cross_agent.rs"
+
+# --- Showcase examples (share examples/common/mod.rs for config) ---
+
+[[example]]
+name = "panel_discussion"
+path = "examples/panel_discussion.rs"
+
+[[example]]
+name = "supervised_loop"
+path = "examples/supervised_loop.rs"
+
+[[example]]
+name = "guardrail_hook"
+path = "examples/guardrail_hook.rs"
+
+[[example]]
+name = "react_tool_agent"
+path = "examples/react_tool_agent.rs"
+
+[[example]]
+name = "debate_judge"
+path = "examples/debate_judge.rs"
+
+[[example]]
+name = "research_pipeline"
+path = "examples/research_pipeline.rs"
+
+[[bench]]
+name = "hook_bench"
+harness = false

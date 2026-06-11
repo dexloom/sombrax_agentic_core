@@ -1,0 +1,4 @@
+# Clippy configuration
+cognitive-complexity-threshold = 25
+disallowed-methods = []
+msrv = "1.92"
