@@ -9,6 +9,7 @@ use reqwest::Client;
 use tracing::{info_span, instrument, Instrument};
 
 use super::types::*;
+use crate::provider::CacheHints;
 use crate::providers::error::{CompletionError, ProviderError};
 use crate::providers::http::build_http_client;
 use crate::providers::zai::client::{
@@ -40,6 +41,7 @@ struct MinimaxClientInner {
     max_tokens: Option<u64>,
     enable_thinking: bool,
     thinking_budget_tokens: Option<u64>,
+    prompt_caching: bool,
 }
 
 impl MinimaxClient {
@@ -70,6 +72,7 @@ pub struct MinimaxClientBuilder {
     max_tokens: Option<u64>,
     enable_thinking: bool,
     thinking_budget_tokens: Option<u64>,
+    prompt_caching: bool,
 }
 
 impl MinimaxClientBuilder {
@@ -84,6 +87,10 @@ impl MinimaxClientBuilder {
             max_tokens: None,
             enable_thinking: false,
             thinking_budget_tokens: None,
+            // Default OFF: the MiniMax Anthropic-compatible endpoint has not been
+            // verified to accept `cache_control`; unknown nested fields could be
+            // rejected. Enable explicitly via config after probing the endpoint.
+            prompt_caching: false,
         }
     }
 
@@ -129,6 +136,17 @@ impl MinimaxClientBuilder {
         self
     }
 
+    /// Enable/disable explicit prompt-cache breakpoints (default: false).
+    ///
+    /// Off by default because the MiniMax Anthropic-compatible endpoint has not
+    /// been verified to accept `cache_control`. When disabled — or when the
+    /// request carries no hints — the wire body is byte-identical to the
+    /// pre-caching representation.
+    pub fn prompt_caching(mut self, enabled: bool) -> Self {
+        self.prompt_caching = enabled;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> MinimaxClient {
         MinimaxClient {
@@ -142,7 +160,86 @@ impl MinimaxClientBuilder {
                 max_tokens: self.max_tokens,
                 enable_thinking: self.enable_thinking,
                 thinking_budget_tokens: self.thinking_budget_tokens,
+                prompt_caching: self.prompt_caching,
             }),
+        }
+    }
+}
+
+/// Translate provider-independent [`CacheHints`] into MiniMax `cache_control`
+/// markers on the merged request structure (Anthropic-compatible placement).
+/// A no-op when `hints` is empty. See the Anthropic client for the rationale.
+fn apply_cache_breakpoints(
+    system: &mut Option<MinimaxSystem>,
+    messages: &mut [MinimaxMessage],
+    tools: Option<&mut Vec<MinimaxTool>>,
+    hints: &CacheHints,
+) {
+    if hints.is_empty() {
+        return;
+    }
+
+    if hints.cache_system {
+        match system {
+            Some(sys) => mark_system(sys),
+            None => {
+                if let Some(last_tool) = tools.and_then(|t| t.last_mut()) {
+                    last_tool.cache_control = Some(MinimaxCacheControl::ephemeral());
+                }
+            }
+        }
+    }
+
+    if !hints.breakpoints.is_empty() && !messages.is_empty() {
+        let last = messages.len() - 1;
+        mark_last_block(&mut messages[last]);
+        if let Some(prev_user) = messages[..last].iter().rposition(|m| m.role == "user") {
+            mark_last_block(&mut messages[prev_user]);
+        }
+    }
+}
+
+/// Attach a cache breakpoint to the system prompt, promoting a plain string to a
+/// single cache-marked text block if needed.
+fn mark_system(system: &mut MinimaxSystem) {
+    match system {
+        MinimaxSystem::Blocks(blocks) => {
+            if let Some(last) = blocks.last_mut() {
+                last.cache_control = Some(MinimaxCacheControl::ephemeral());
+            }
+        }
+        MinimaxSystem::Text(text) => {
+            *system = MinimaxSystem::Blocks(vec![MinimaxSystemBlock {
+                block_type: "text".to_string(),
+                text: std::mem::take(text),
+                cache_control: Some(MinimaxCacheControl::ephemeral()),
+            }]);
+        }
+    }
+}
+
+/// Attach a cache breakpoint to the last cache-eligible content block of a
+/// message (skipping `thinking` blocks). Promotes plain `Text` content if needed.
+fn mark_last_block(message: &mut MinimaxMessage) {
+    match &mut message.content {
+        MinimaxContent::Blocks(blocks) => {
+            for block in blocks.iter_mut().rev() {
+                match block {
+                    MinimaxContentBlock::Text { cache_control, .. }
+                    | MinimaxContentBlock::ToolUse { cache_control, .. }
+                    | MinimaxContentBlock::ToolResult { cache_control, .. } => {
+                        *cache_control = Some(MinimaxCacheControl::ephemeral());
+                        return;
+                    }
+                    MinimaxContentBlock::Thinking { .. } => continue,
+                }
+            }
+        }
+        MinimaxContent::Text(text) => {
+            message.content = MinimaxContent::Blocks(vec![MinimaxContentBlock::Text {
+                text: std::mem::take(text),
+                cache_control: Some(MinimaxCacheControl::ephemeral()),
+            }]);
         }
     }
 }
@@ -173,8 +270,9 @@ impl MinimaxCompletionModel {
     ) -> Result<CompletionResponse<MinimaxResponse>, CompletionError> {
         let inner = &self.client.inner;
 
-        // Extract system message from preamble
-        let system = request.preamble.clone();
+        // Extract system message from preamble. Plain `Text` by default — only
+        // promoted to cache-marked blocks below when caching is active.
+        let mut system = request.preamble.clone().map(MinimaxSystem::Text);
 
         // Convert messages, merging consecutive tool results into a single user message.
         // The Anthropic-compatible API requires all tool_result blocks for a multi-tool-call
@@ -188,6 +286,7 @@ impl MinimaxCompletionModel {
                     tool_use_id: tool_call_id.clone(),
                     content: msg.content.clone(),
                     is_error: None,
+                    cache_control: None,
                 };
 
                 if let Some(last) = messages.last_mut() {
@@ -229,6 +328,7 @@ impl MinimaxCompletionModel {
                 if !msg.content.is_empty() {
                     blocks.push(MinimaxContentBlock::Text {
                         text: msg.content.clone(),
+                        cache_control: None,
                     });
                 }
 
@@ -239,6 +339,7 @@ impl MinimaxCompletionModel {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         input,
+                        cache_control: None,
                     });
                 }
 
@@ -249,6 +350,7 @@ impl MinimaxCompletionModel {
                 if !msg.content.is_empty() {
                     blocks.push(MinimaxContentBlock::Text {
                         text: msg.content.clone(),
+                        cache_control: None,
                     });
                 }
                 MinimaxContent::Blocks(blocks)
@@ -262,7 +364,7 @@ impl MinimaxCompletionModel {
 
         // Build tools (always send array, even if empty)
         // Ensure each tool's input_schema has a "properties" field (required by some APIs)
-        let tools = Some(
+        let mut tools = Some(
             request
                 .tools
                 .iter()
@@ -276,10 +378,17 @@ impl MinimaxCompletionModel {
                         name: t.name.clone(),
                         description: t.description.clone(),
                         input_schema: schema,
+                        cache_control: None,
                     }
                 })
                 .collect(),
         );
+
+        // Translate provider-independent cache hints into MiniMax
+        // `cache_control` markers. No-op (byte-identical) when disabled or empty.
+        if inner.prompt_caching {
+            apply_cache_breakpoints(&mut system, &mut messages, tools.as_mut(), &request.cache);
+        }
 
         let max_tokens = request
             .max_tokens

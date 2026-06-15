@@ -125,6 +125,7 @@ impl ExtractorWrapper {
             temperature: Some(0.0), // Use low temperature for extraction
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         // Call the appropriate provider and extract the tool arguments

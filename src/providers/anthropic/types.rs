@@ -2,6 +2,56 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Anthropic prompt-cache control marker (`{"type": "ephemeral"}`).
+///
+/// Attached to a content block, tool, or system block to tell Anthropic to
+/// cache the prefix up to and including that element. Ephemeral entries have a
+/// 5-minute TTL, refreshed on every cache hit. Prompt caching is GA, so no beta
+/// header is required.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnthropicCacheControl {
+    /// Cache type — always `"ephemeral"`.
+    #[serde(rename = "type")]
+    pub cache_type: String,
+}
+
+impl AnthropicCacheControl {
+    /// The 5-minute ephemeral cache breakpoint.
+    pub fn ephemeral() -> Self {
+        Self {
+            cache_type: "ephemeral".to_string(),
+        }
+    }
+}
+
+/// Anthropic system prompt — a plain string, or text blocks that can carry a
+/// cache_control marker.
+///
+/// Serializes untagged: `Text` emits a bare JSON string (byte-identical to the
+/// previous `Option<String>` representation), `Blocks` emits an array of
+/// `{"type":"text", ...}` objects. Caching off ⇒ always `Text` ⇒ no wire change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AnthropicSystem {
+    /// Plain system string (default, no caching).
+    Text(String),
+    /// System as text blocks (used to attach a cache_control marker).
+    Blocks(Vec<AnthropicSystemBlock>),
+}
+
+/// A system text block (`{"type":"text","text":...,"cache_control"?:...}`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnthropicSystemBlock {
+    /// Block type — always `"text"`.
+    #[serde(rename = "type")]
+    pub block_type: String,
+    /// System text payload.
+    pub text: String,
+    /// Optional cache breakpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<AnthropicCacheControl>,
+}
+
 /// Anthropic Messages API request
 #[derive(Debug, Clone, Serialize)]
 pub struct AnthropicRequest {
@@ -13,7 +63,7 @@ pub struct AnthropicRequest {
     pub max_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Optional system prompt.
-    pub system: Option<String>,
+    pub system: Option<AnthropicSystem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Sampling temperature.
     pub temperature: Option<f64>,
@@ -96,7 +146,7 @@ impl AnthropicContent {
             AnthropicContent::Blocks(blocks) => blocks
                 .iter()
                 .filter_map(|b| match b {
-                    AnthropicContentBlock::Text { text } => Some(text.clone()),
+                    AnthropicContentBlock::Text { text, .. } => Some(text.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -114,9 +164,14 @@ pub enum AnthropicContentBlock {
     Text {
         /// Text payload.
         text: String,
+        /// Optional cache breakpoint. `None` is skipped, so an unmarked text
+        /// block is byte-identical to the pre-caching representation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
     },
     #[serde(rename = "thinking")]
-    /// Reasoning/thinking block.
+    /// Reasoning/thinking block. Never carries cache_control (the API rejects
+    /// a marker on a thinking block).
     Thinking {
         /// Thinking payload.
         thinking: String,
@@ -130,6 +185,9 @@ pub enum AnthropicContentBlock {
         name: String,
         /// Tool input payload.
         input: serde_json::Value,
+        /// Optional cache breakpoint.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
     },
     #[serde(rename = "tool_result")]
     /// Tool result block.
@@ -141,6 +199,9 @@ pub enum AnthropicContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         /// Indicates the tool returned an error.
         is_error: Option<bool>,
+        /// Optional cache breakpoint.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<AnthropicCacheControl>,
     },
 }
 
@@ -153,6 +214,10 @@ pub struct AnthropicTool {
     pub description: String,
     /// Tool input schema.
     pub input_schema: serde_json::Value,
+    /// Optional cache breakpoint. Marking the last tool caches the whole tools
+    /// block (tools precede the system prompt in the cacheable prefix).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<AnthropicCacheControl>,
 }
 
 /// Anthropic tool choice

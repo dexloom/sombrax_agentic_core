@@ -14,7 +14,7 @@ use crate::context::{ContextOptimizer, HookContext, OptimizationConfig};
 use crate::error::{CompletionError, RegistryError};
 use crate::hook::{Hook, HookChain, ToolCallDecision};
 use crate::message::Message;
-use crate::provider::{CompletionModel, CompletionRequest, CompletionResponse};
+use crate::provider::{CacheHints, CompletionModel, CompletionRequest, CompletionResponse, Usage};
 use crate::retry::{ResponseValidation, RetryConfig};
 use crate::skill::{default_search_paths, SkillRegistry};
 use crate::telemetry::Metrics;
@@ -66,6 +66,51 @@ fn is_tool_argument_error(err: &str) -> bool {
         || err_lower.contains("no such file")
 }
 
+/// Record per-completion token usage and emit a `sac::cache` telemetry event.
+///
+/// Pushes the usage onto `stats.turn_usages` (turn-ordered) and logs the
+/// prompt-cache hit ratio (`cache_read / input`) plus the number of messages
+/// sent in the request that produced this response. This is the per-turn
+/// signal used to verify that an append-only context actually keeps the
+/// provider's prompt cache warm: a healthy run shows `hit_ratio` climbing
+/// toward ~1.0 and dropping only on deliberate compaction turns.
+fn record_turn_usage(stats: &mut ExecutionStats, usage: &Usage, messages_sent: usize) {
+    stats.turn_usages.push(*usage);
+    let hit_ratio = if usage.input_tokens > 0 {
+        usage.cache_read_tokens as f64 / usage.input_tokens as f64
+    } else {
+        0.0
+    };
+    tracing::info!(
+        target: "sac::cache",
+        turn = stats.turn_usages.len(),
+        input = usage.input_tokens,
+        output = usage.output_tokens,
+        cache_read = usage.cache_read_tokens,
+        cache_creation = usage.cache_creation_tokens,
+        hit_ratio = format!("{hit_ratio:.2}"),
+        messages_sent,
+        "completion cache stats"
+    );
+}
+
+/// Debug-only check that an optimizer left the frozen prefix byte-identical.
+///
+/// The frozen prefix (and, for cache-aware optimizers, the already-sent
+/// high-water-mark prefix) MUST survive `optimize()` unchanged, or the
+/// provider's prompt cache is invalidated from the first mutated message
+/// onward. Compiled out entirely in release builds.
+#[cfg(debug_assertions)]
+fn assert_frozen_prefix_unchanged(before: &[Message], after: &[Message]) {
+    for (i, prev) in before.iter().enumerate() {
+        debug_assert!(
+            after.get(i) == Some(prev),
+            "context optimizer mutated frozen-prefix message at index {i}; \
+             this breaks the provider prompt-cache prefix"
+        );
+    }
+}
+
 /// Execution statistics for an agent prompt execution.
 ///
 /// Tracks cumulative metrics across all LLM calls and tool executions
@@ -90,6 +135,14 @@ pub struct ExecutionStats {
     pub retries_count: usize,
     /// Number of tool errors encountered
     pub tool_error_count: usize,
+    /// Per-completion token usage, in turn order.
+    ///
+    /// One entry is pushed for each LLM completion that contributes to the
+    /// cumulative token counters above (truncation-retry resends are not
+    /// recorded here). Lets benches/observers compute per-turn prompt-cache
+    /// hit-ratio curves (`cache_read_tokens / input_tokens`) without scraping
+    /// logs. Empty by default; populated only by the live agent loop.
+    pub turn_usages: Vec<Usage>,
 }
 
 impl ExecutionStats {
@@ -107,6 +160,7 @@ impl ExecutionStats {
         self.message_count += other.message_count;
         self.retries_count += other.retries_count;
         self.tool_error_count += other.tool_error_count;
+        self.turn_usages.extend_from_slice(&other.turn_usages);
     }
 
     /// Get total tokens (input + output).
@@ -378,6 +432,13 @@ pub struct Agent<M: CompletionModel> {
     response_validation: Option<ResponseValidation>,
     /// Skill registry (optional)
     skill_registry: Option<Arc<SkillRegistry>>,
+    /// Emit provider-independent prompt-cache hints on each request.
+    ///
+    /// When true (default), the agent loop tags each completion request with
+    /// `CacheHints` (cache the system+tools prefix and the moving tail). Honored
+    /// by providers with an explicit cache protocol; ignored by implicit-cache
+    /// providers (harmless). Set false to suppress hints entirely.
+    prompt_caching: bool,
 }
 
 impl<M: CompletionModel> Agent<M> {
@@ -418,6 +479,39 @@ impl<M: CompletionModel> Agent<M> {
             defs.push(tool.definition(prompt.to_string()).await);
         }
         defs
+    }
+
+    /// Compute provider-independent prompt-cache hints for a request.
+    ///
+    /// Returns empty hints when `prompt_caching` is disabled. Otherwise requests
+    /// caching of the system+tools prefix plus two moving breakpoints near the
+    /// tail: the last message, and the most recent *earlier* user message. The
+    /// second breakpoint is the resilient one — because the agent appends one
+    /// assistant message plus one tool-results user message per turn, that
+    /// earlier user message is byte-identical to the previous request's tail,
+    /// so the provider finds the prior cache entry even when this turn appended
+    /// several blocks. Indices are deduplicated and returned in ascending order.
+    fn compute_cache_hints(&self, messages: &[Message]) -> CacheHints {
+        if !self.prompt_caching || messages.is_empty() {
+            return CacheHints::default();
+        }
+        let last = messages.len() - 1;
+        let mut breakpoints = vec![last];
+        if let Some(prev_user) = messages[..last]
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, m)| matches!(m, Message::User { .. }))
+            .map(|(i, _)| i)
+        {
+            breakpoints.push(prev_user);
+        }
+        breakpoints.sort_unstable();
+        breakpoints.dedup();
+        CacheHints {
+            cache_system: true,
+            breakpoints,
+        }
     }
 
     /// Find a tool by name
@@ -720,9 +814,17 @@ impl<M: CompletionModel> Agent<M> {
             messages.push(message);
 
             if let Some(optimizer) = &self.optimizer {
+                #[cfg(debug_assertions)]
+                let frozen_snapshot: Vec<Message> = messages
+                    .iter()
+                    .take(self.optimization_config.frozen_prefix_len)
+                    .cloned()
+                    .collect();
                 messages = optimizer
                     .optimize(messages, &self.optimization_config)
                     .await;
+                #[cfg(debug_assertions)]
+                assert_frozen_prefix_unchanged(&frozen_snapshot, &messages);
             }
 
             (messages, tools, 0)
@@ -736,7 +838,12 @@ impl<M: CompletionModel> Agent<M> {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: self.compute_cache_hints(&messages),
         };
+        // Cache high-water mark: messages sent in the previous request. Updated
+        // after every request build so per-turn optimize() can keep the
+        // already-sent prefix byte-stable for the provider's prompt cache.
+        let mut last_sent_len = request.messages.len();
 
         // Send to model with retry logic for transient errors
         let (mut response, retry_count) = self.completion_with_retry(request, &metrics).await?;
@@ -753,6 +860,7 @@ impl<M: CompletionModel> Agent<M> {
         stats.output_tokens += response.usage.output_tokens;
         stats.cache_read_tokens += response.usage.cache_read_tokens;
         stats.cache_creation_tokens += response.usage.cache_creation_tokens;
+        record_turn_usage(&mut stats, &response.usage, messages.len());
 
         // Notify hooks of assistant message (for display/logging)
         self.hook_chain
@@ -809,7 +917,9 @@ impl<M: CompletionModel> Agent<M> {
                     temperature: None,
                     max_tokens: None,
                     additional_params: None,
+                    cache: self.compute_cache_hints(&messages),
                 };
+                last_sent_len = request.messages.len();
 
                 let (mut new_response, retry_count) =
                     self.completion_with_retry(request, &metrics).await?;
@@ -965,7 +1075,9 @@ impl<M: CompletionModel> Agent<M> {
                         temperature: None,
                         max_tokens: None,
                         additional_params: None,
+                        cache: self.compute_cache_hints(&messages),
                     };
+                    last_sent_len = request.messages.len();
 
                     let (mut new_response, retry_count) =
                         self.completion_with_retry(request, &metrics).await?;
@@ -993,11 +1105,22 @@ impl<M: CompletionModel> Agent<M> {
                 truncation_retry_count = 0;
             }
 
-            // Re-optimize context if needed
+            // Re-optimize context if needed. Pass the cache high-water mark so
+            // cache-aware optimizers keep the already-sent prefix byte-stable.
             if let Some(optimizer) = &self.optimizer {
-                messages = optimizer
-                    .optimize(messages, &self.optimization_config)
-                    .await;
+                let opt_config = self
+                    .optimization_config
+                    .clone()
+                    .last_sent_len(last_sent_len);
+                #[cfg(debug_assertions)]
+                let frozen_snapshot: Vec<Message> = messages
+                    .iter()
+                    .take(opt_config.frozen_prefix_len)
+                    .cloned()
+                    .collect();
+                messages = optimizer.optimize(messages, &opt_config).await;
+                #[cfg(debug_assertions)]
+                assert_frozen_prefix_unchanged(&frozen_snapshot, &messages);
             }
 
             // Build the next completion request
@@ -1008,7 +1131,9 @@ impl<M: CompletionModel> Agent<M> {
                 temperature: None,
                 max_tokens: None,
                 additional_params: None,
+                cache: self.compute_cache_hints(&messages),
             };
+            last_sent_len = request.messages.len();
 
             // Send to model with retry logic for transient errors
             let (mut new_response, retry_count) =
@@ -1028,6 +1153,7 @@ impl<M: CompletionModel> Agent<M> {
             stats.output_tokens += response.usage.output_tokens;
             stats.cache_read_tokens += response.usage.cache_read_tokens;
             stats.cache_creation_tokens += response.usage.cache_creation_tokens;
+            record_turn_usage(&mut stats, &response.usage, messages.len());
 
             // Notify hooks of assistant message (for display/logging)
             self.hook_chain
@@ -1082,6 +1208,7 @@ impl<M: CompletionModel> Clone for Agent<M> {
             retry_config: self.retry_config.clone(),
             response_validation: self.response_validation.clone(),
             skill_registry: self.skill_registry.clone(),
+            prompt_caching: self.prompt_caching,
         }
     }
 }
@@ -1101,6 +1228,7 @@ pub struct AgentBuilder<M: CompletionModel> {
     response_validation: Option<ResponseValidation>,
     skill_registry: Option<Arc<SkillRegistry>>,
     enable_skills: bool,
+    prompt_caching: bool,
 }
 
 impl<M: CompletionModel> AgentBuilder<M> {
@@ -1120,6 +1248,7 @@ impl<M: CompletionModel> AgentBuilder<M> {
             response_validation: None,
             skill_registry: None,
             enable_skills: false,
+            prompt_caching: true,
         }
     }
 
@@ -1132,6 +1261,16 @@ impl<M: CompletionModel> AgentBuilder<M> {
     /// Set the system preamble
     pub fn preamble(mut self, preamble: impl Into<String>) -> Self {
         self.preamble = Some(preamble.into());
+        self
+    }
+
+    /// Enable or disable provider-independent prompt-cache hints (default: enabled).
+    ///
+    /// When enabled, each completion request carries `CacheHints` marking the
+    /// system+tools prefix and the moving tail as cacheable. Providers with an
+    /// explicit cache protocol act on them; implicit-cache providers ignore them.
+    pub fn prompt_caching(mut self, enabled: bool) -> Self {
+        self.prompt_caching = enabled;
         self
     }
 
@@ -1348,6 +1487,7 @@ impl<M: CompletionModel> AgentBuilder<M> {
             retry_config: self.retry_config,
             response_validation: self.response_validation,
             skill_registry,
+            prompt_caching: self.prompt_caching,
         }
     }
 }
@@ -1420,6 +1560,34 @@ mod tests {
         fn provider(&self) -> &str {
             "mock"
         }
+    }
+
+    #[test]
+    fn compute_cache_hints_marks_system_and_two_tail_breakpoints() {
+        let agent = Agent::builder(MockModel).build(); // prompt_caching defaults to true
+        let msgs = vec![
+            Message::user("a"),      // 0: most recent *earlier* user
+            Message::assistant("b"), // 1
+            Message::user("c"),      // 2: final message
+        ];
+        let hints = agent.compute_cache_hints(&msgs);
+        assert!(hints.cache_system);
+        // Final message (2) + most recent earlier user (0), ascending & deduped.
+        assert_eq!(hints.breakpoints, vec![0, 2]);
+    }
+
+    #[test]
+    fn compute_cache_hints_single_message_has_one_breakpoint() {
+        let agent = Agent::builder(MockModel).build();
+        let hints = agent.compute_cache_hints(&[Message::user("only")]);
+        assert_eq!(hints.breakpoints, vec![0]);
+    }
+
+    #[test]
+    fn compute_cache_hints_disabled_is_empty() {
+        let agent = Agent::builder(MockModel).prompt_caching(false).build();
+        let hints = agent.compute_cache_hints(&[Message::user("a"), Message::user("b")]);
+        assert!(hints.is_empty());
     }
 
     /// Mock model that returns tool calls on first invocation, then final answer

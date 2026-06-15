@@ -881,6 +881,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let lmstudio_request = model.build_request(&request, &model.client.inner);
@@ -917,6 +918,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let lmstudio_request = model.build_request(&request, &model.client.inner);
@@ -971,6 +973,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let lmstudio_request = model.build_request(&request, &model.client.inner);

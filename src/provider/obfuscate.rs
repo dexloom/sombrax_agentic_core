@@ -666,6 +666,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let _ = model.completion(request).await.unwrap();
@@ -697,6 +698,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let _ = model.completion(request).await.unwrap();
@@ -726,6 +728,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let _ = model.completion(request).await.unwrap();
@@ -755,6 +758,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let _ = model.completion(request).await.unwrap();

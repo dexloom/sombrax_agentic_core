@@ -16,6 +16,7 @@ It was initially inspired by the RIG library and evolved toward stronger agent o
 | Agent logic becomes hard to control | `AgentBuilder` + hook chain let you intercept and modify messages, tool calls, and responses. |
 | Tool loops fail on malformed/truncated model output | Built-in retry/backoff, validation retries, and rollback behavior around tool-call failures. |
 | Long sessions bloat context windows | Pluggable context optimizers (`Recency`, `Priority`, `Truncation`) + configurable token budgets. |
+| Repeated turns re-bill the same prompt prefix | Provider-independent prompt-cache hints keep the system+history prefix cache-stable; per-turn cache telemetry surfaces the hit ratio. |
 | File-edit workflows keep stale snapshots | File-history context classification tracks `read`/`write`/`edit` and computes keep/drop/move decisions. |
 | Local models need provider-specific handling | First-class local providers: `ollama`, `lmstudio`, `mlx/mlxlm`, with anti-loop controls and template handling. |
 | Tool execution needs guardrails | Workspace-bounded file tools and shell safety filters for dangerous command patterns. |
@@ -27,6 +28,7 @@ It was initially inspired by the RIG library and evolved toward stronger agent o
 - MCP tool integration (`McpToolSource`)
 - Cross-agent registry and shared context
 - Provider-agnostic factory (`build_agent`) and provider-specific builders
+- Provider-independent prompt caching with per-turn cache telemetry
 - OpenTelemetry-friendly metrics/tracing integration
 
 ## Context Management (Main Focus)
@@ -78,6 +80,42 @@ This is especially useful when an agent reads/edits the same file repeatedly in 
 
 - `HookContext`: per-request mutable context across hooks
 - `SharedContext`: session-scoped shared state for multi-agent flows
+
+### 4) Prompt Caching
+
+Long agent loops resend a large, mostly-static prefix (system preamble + tool
+definitions + prior turns) on every request. `sombrax_agentic_core` expresses
+caching as a provider-independent intent — `provider::CacheHints` on each
+`CompletionRequest` — so core SAC owns the semantic and each provider translates
+or ignores it:
+
+- Providers with an explicit cache protocol (Anthropic, MiniMax) translate the
+  hints into `cache_control` ephemeral markers on the system block and the moving
+  conversation tail.
+- Implicit-prefix-cache providers (OpenAI, ZAI, OpenRouter, Cerebras, and the
+  local runtimes) need no wire changes — they simply benefit from a stable,
+  append-only message prefix. With caching off, the request body is byte-identical
+  to before.
+
+The agent loop computes the hints for you (cache the system+tools prefix and the
+already-sent history high-water mark) and keeps that prefix byte-stable between
+deliberate compaction points. It is on by default; toggle it per agent, or per
+config for the factory path:
+
+```rust
+use sombrax_agentic_core::AgentBuilder;
+
+// Default is on. Disable explicitly when you want raw, uncached requests:
+let agent = AgentBuilder::new(model)
+    .prompt_caching(false)
+    .build();
+```
+
+`LlmConfigLike::prompt_caching() -> Option<bool>` overrides the per-provider
+default in the `build_agent` path (Anthropic defaults on, MiniMax off until its
+compat endpoint is probed). Cache effectiveness is observable: `ExecutionStats`
+carries per-turn `Usage` (`turn_usages`, including `cache_read`/`cache_creation`
+tokens) and each completion emits a `sac::cache` hit-ratio tracing line.
 
 ## Local Models (Main Focus)
 
@@ -184,7 +222,10 @@ Supported provider IDs include: `openrouter`, `openai`, `anthropic`, `minimax`, 
 - Web tool: `FetchTool`
 - Agent tools: `TaskTool`, `TodoReadTool`, `TodoWriteTool`
 
-Tools run inside a `ToolContext` with workspace boundary checks.
+Tools run inside a `ToolContext` with workspace boundary checks. `GlobTool`
+additionally rejects patterns that escape the workspace (absolute, leading `~`,
+or `..` components) and runs every walk under a hard 20s wall-clock timeout, so a
+pathological pattern can never hang an agent.
 
 ## MCP Integration
 
@@ -204,7 +245,7 @@ You can attach MCP tools to an agent via `AgentBuilder::mcp_tools(source).await`
 
 ```toml
 [dependencies]
-sombrax_agentic_core = "0.1"
+sombrax_agentic_core = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 

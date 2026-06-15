@@ -29,6 +29,16 @@ pub struct OptimizationConfig {
     /// Use case: multi-stage agent pipelines where Stage 2 receives Stage 1's message
     /// history. Modifying any Stage 1 message would invalidate the cache prefix.
     pub frozen_prefix_len: usize,
+
+    /// Number of messages included in the *previous* completion request
+    /// (the cache high-water mark); 0 before the first request.
+    ///
+    /// Advisory hint, not enforced by SAC. Cache-aware optimizers treat the
+    /// first `last_sent_len` messages as already sent (cache-hot) and avoid
+    /// mutating them outside deliberate compaction points, so the provider's
+    /// implicit prefix cache stays valid turn-to-turn. The agent loop sets
+    /// this each turn; optimizers that ignore it behave exactly as before.
+    pub last_sent_len: usize,
 }
 
 impl Default for OptimizationConfig {
@@ -38,6 +48,7 @@ impl Default for OptimizationConfig {
             pinned_ids: HashSet::new(),
             token_budget: 4096,
             frozen_prefix_len: 0,
+            last_sent_len: 0,
         }
     }
 }
@@ -77,6 +88,15 @@ impl OptimizationConfig {
     /// preserving the LLM's KV cache prefix for multi-stage continuations.
     pub fn frozen_prefix(mut self, n: usize) -> Self {
         self.frozen_prefix_len = n;
+        self
+    }
+
+    /// Set the cache high-water mark (count of messages previously sent).
+    ///
+    /// Advisory; cache-aware optimizers use it to keep the already-sent prefix
+    /// byte-identical between compaction points.
+    pub fn last_sent_len(mut self, n: usize) -> Self {
+        self.last_sent_len = n;
         self
     }
 }

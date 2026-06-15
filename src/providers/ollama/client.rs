@@ -625,6 +625,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let msgs = OllamaCompletionModel::build_messages(&request).unwrap();
@@ -653,6 +654,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
         let msgs = OllamaCompletionModel::build_messages(&request).unwrap();
         assert_eq!(msgs[0].role, "tool");
@@ -678,6 +680,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
         assert!(matches!(
             OllamaCompletionModel::build_messages(&request),

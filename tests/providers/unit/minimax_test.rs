@@ -125,6 +125,7 @@ fn test_completion_request_with_messages() {
         temperature: Some(0.7),
         max_tokens: Some(1000),
         additional_params: None,
+        cache: Default::default(),
     };
 
     assert_eq!(
@@ -234,6 +235,7 @@ fn test_minimax_content_block_text_serialization() {
 
     let content = MinimaxContent::Blocks(vec![MinimaxContentBlock::Text {
         text: "Hello!".to_string(),
+        cache_control: None,
     }]);
     let json = serde_json::to_string(&content).unwrap();
     assert!(json.contains(r#""type":"text""#));
@@ -247,9 +249,11 @@ fn test_minimax_content_blocks_text_extraction() {
     let content = MinimaxContent::Blocks(vec![
         MinimaxContentBlock::Text {
             text: "Hello ".to_string(),
+            cache_control: None,
         },
         MinimaxContentBlock::Text {
             text: "world!".to_string(),
+            cache_control: None,
         },
     ]);
     assert_eq!(content.text(), "Hello world!");
@@ -275,6 +279,7 @@ fn test_minimax_content_block_tool_use_serialization() {
         id: "tool_123".to_string(),
         name: "get_weather".to_string(),
         input: serde_json::json!({"location": "NYC"}),
+        cache_control: None,
     };
     let json = serde_json::to_string(&block).unwrap();
     assert!(json.contains(r#""type":"tool_use""#));
@@ -291,6 +296,7 @@ fn test_minimax_content_block_tool_result_serialization() {
         tool_use_id: "tool_123".to_string(),
         content: "72°F and sunny".to_string(),
         is_error: None,
+        cache_control: None,
     };
     let json = serde_json::to_string(&block).unwrap();
     assert!(json.contains(r#""type":"tool_result""#));
@@ -308,6 +314,7 @@ fn test_minimax_content_block_tool_result_with_error_serialization() {
         tool_use_id: "tool_123".to_string(),
         content: "Error: API unavailable".to_string(),
         is_error: Some(true),
+        cache_control: None,
     };
     let json = serde_json::to_string(&block).unwrap();
     assert!(json.contains(r#""is_error":true"#));
@@ -340,6 +347,7 @@ fn test_minimax_tool_serialization() {
             },
             "required": ["expression"]
         }),
+        cache_control: None,
     };
     let json = serde_json::to_string(&tool).unwrap();
     assert!(json.contains(r#""name":"calculator""#));
@@ -380,7 +388,7 @@ fn test_minimax_tool_choice_tool_serialization() {
 #[test]
 fn test_minimax_request_serialization() {
     use sombrax_agentic_core::providers::minimax::types::{
-        MinimaxContent, MinimaxMessage, MinimaxRequest,
+        MinimaxContent, MinimaxMessage, MinimaxRequest, MinimaxSystem,
     };
 
     let request = MinimaxRequest {
@@ -390,15 +398,17 @@ fn test_minimax_request_serialization() {
             content: MinimaxContent::Text("Hello!".to_string()),
         }],
         max_tokens: 1024,
-        system: Some("You are a helpful assistant.".to_string()),
+        system: Some(MinimaxSystem::Text(
+            "You are a helpful assistant.".to_string(),
+        )),
         temperature: Some(0.7),
         top_p: Some(0.9),
         top_k: Some(40),
         tools: None,
         tool_choice: None,
         metadata: None,
-        stream: None,
         thinking: None,
+        stream: None,
     };
     let json = serde_json::to_string(&request).unwrap();
     assert!(json.contains(r#""model":"minimax-m2.1""#));
@@ -433,8 +443,8 @@ fn test_minimax_request_minimal_serialization() {
         tools: None,
         tool_choice: None,
         metadata: None,
-        stream: None,
         thinking: None,
+        stream: None,
     };
     let json = serde_json::to_string(&request).unwrap();
     // Only required fields should be present
@@ -616,7 +626,7 @@ fn test_minimax_content_block_text_deserialization() {
     let block: MinimaxContentBlock = serde_json::from_str(json).unwrap();
 
     match block {
-        MinimaxContentBlock::Text { text } => assert_eq!(text, "Hello!"),
+        MinimaxContentBlock::Text { text, .. } => assert_eq!(text, "Hello!"),
         _ => panic!("Expected text block"),
     }
 }
@@ -644,7 +654,9 @@ fn test_minimax_content_block_tool_use_deserialization() {
     let block: MinimaxContentBlock = serde_json::from_str(json).unwrap();
 
     match block {
-        MinimaxContentBlock::ToolUse { id, name, input } => {
+        MinimaxContentBlock::ToolUse {
+            id, name, input, ..
+        } => {
             assert_eq!(id, "t1");
             assert_eq!(name, "calc");
             assert_eq!(input["x"], 1);
@@ -665,6 +677,7 @@ fn test_minimax_content_block_tool_result_deserialization() {
             tool_use_id,
             content,
             is_error,
+            ..
         } => {
             assert_eq!(tool_use_id, "t1");
             assert_eq!(content, "result");

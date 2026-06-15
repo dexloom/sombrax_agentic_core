@@ -133,6 +133,7 @@ async fn test_minimax_completion_request_response() {
         temperature: None,
         max_tokens: Some(1024),
         additional_params: None,
+        cache: Default::default(),
     };
 
     let response = model.completion(request).await.unwrap();
@@ -188,6 +189,7 @@ async fn test_minimax_with_sampling_params() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let response = model.completion(request).await.unwrap();
@@ -247,6 +249,7 @@ async fn test_minimax_completion_with_tool_calls() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let response = model.completion(request).await.unwrap();
@@ -300,6 +303,7 @@ async fn test_minimax_completion_with_thinking() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let response = model.completion(request).await.unwrap();
@@ -356,6 +360,7 @@ async fn test_minimax_completion_with_cache_usage() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let response = model.completion(request).await.unwrap();
@@ -399,6 +404,7 @@ async fn test_minimax_rate_limit_error() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let result = model.completion(request).await;
@@ -447,6 +453,7 @@ async fn test_minimax_auth_error() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let result = model.completion(request).await;
@@ -495,6 +502,7 @@ async fn test_minimax_server_error() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let result = model.completion(request).await;
@@ -591,6 +599,7 @@ async fn test_minimax_merges_consecutive_tool_results() {
         temperature: None,
         max_tokens: None,
         additional_params: None,
+        cache: Default::default(),
     };
 
     let response = model.completion(request).await.unwrap();

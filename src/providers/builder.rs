@@ -308,7 +308,8 @@ pub async fn build_agent_with_options<C: LlmConfigLike, H: Hook + Clone>(
             );
             let mut builder = AnthropicClientBuilder::new(api_key)
                 .base_url(config.url())
-                .enable_thinking(enable_thinking);
+                .enable_thinking(enable_thinking)
+                .prompt_caching(config.prompt_caching().unwrap_or(true));
 
             if let Some(budget) = config.thinking_budget_tokens() {
                 builder = builder.thinking_budget_tokens(budget);
@@ -360,7 +361,8 @@ pub async fn build_agent_with_options<C: LlmConfigLike, H: Hook + Clone>(
             );
             let mut builder = MinimaxClientBuilder::new(api_key)
                 .base_url(config.url())
-                .enable_thinking(enable_thinking);
+                .enable_thinking(enable_thinking)
+                .prompt_caching(config.prompt_caching().unwrap_or(false));
 
             if let Some(budget) = config.thinking_budget_tokens() {
                 builder = builder.thinking_budget_tokens(budget);

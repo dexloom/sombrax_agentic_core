@@ -173,6 +173,11 @@ pub struct CompletionRequest {
     pub max_tokens: Option<u64>,
     /// Provider-specific parameters.
     pub additional_params: Option<serde_json::Value>,
+    /// Provider-independent prompt-cache hints (translated to wire markers by
+    /// clients with an explicit cache protocol; ignored by implicit-cache
+    /// clients). This is an intermediate, non-serialized request type, so the
+    /// field never appears on any provider's wire body.
+    pub cache: crate::provider::CacheHints,
 }
 
 /// Message in a completion request

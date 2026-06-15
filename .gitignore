@@ -22,3 +22,7 @@ Thumbs.db
 
 # External source dependencies (reference only)
 /sources/
+
+# Pipeline / planning artifacts (not part of the published crate)
+SPEC.md
+IMPLEMENTATION_PLAN.md

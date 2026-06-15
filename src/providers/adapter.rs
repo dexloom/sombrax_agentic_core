@@ -170,6 +170,7 @@ fn convert_request_to_provider(request: &CompletionRequest) -> zai_types::Comple
         temperature: request.temperature,
         max_tokens: request.max_tokens,
         additional_params: request.additional_params.clone(),
+        cache: request.cache.clone(),
     }
 }
 
@@ -250,9 +251,11 @@ impl CompletionModel for ZaiCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -303,9 +306,11 @@ impl CompletionModel for AnthropicCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -356,9 +361,11 @@ impl CompletionModel for MinimaxCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -409,9 +416,11 @@ impl CompletionModel for OpenAICompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -462,9 +471,11 @@ impl CompletionModel for CerebrasCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -515,9 +526,11 @@ impl CompletionModel for OllamaCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -568,9 +581,11 @@ impl CompletionModel for OpenRouterCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -709,9 +724,11 @@ impl CompletionModel for LmStudioCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,
@@ -774,9 +791,11 @@ impl CompletionModel for MlxLmCompletionModelAdapter {
 
         let mut resp = CompletionResponse::with_reasoning(
             convert_message_from_provider(&provider_response.message),
-            Usage::new(
+            Usage::with_cache(
                 provider_response.usage.prompt_tokens,
                 provider_response.usage.completion_tokens,
+                provider_response.usage.cache_read_tokens,
+                provider_response.usage.cache_creation_tokens,
             ),
             provider_response.raw,
             provider_response.reasoning_content,

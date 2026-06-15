@@ -38,9 +38,11 @@ fn test_anthropic_content_blocks() {
     let content = AnthropicContent::Blocks(vec![
         AnthropicContentBlock::Text {
             text: "Part 1".to_string(),
+            cache_control: None,
         },
         AnthropicContentBlock::Text {
             text: "Part 2".to_string(),
+            cache_control: None,
         },
     ]);
     assert_eq!(content.text(), "Part 1Part 2");
@@ -51,11 +53,13 @@ fn test_anthropic_content_blocks_with_tool_use() {
     let content = AnthropicContent::Blocks(vec![
         AnthropicContentBlock::Text {
             text: "Let me use a tool".to_string(),
+            cache_control: None,
         },
         AnthropicContentBlock::ToolUse {
             id: "tool_123".to_string(),
             name: "search".to_string(),
             input: serde_json::json!({"query": "test"}),
+            cache_control: None,
         },
     ]);
     // text() should only extract text blocks
@@ -86,6 +90,7 @@ fn test_anthropic_tool_definition() {
             },
             "required": ["location"]
         }),
+        cache_control: None,
     };
 
     let json = serde_json::to_string(&tool).unwrap();
@@ -126,15 +131,15 @@ fn test_anthropic_request_serialization() {
             content: AnthropicContent::Text("Hello".to_string()),
         }],
         max_tokens: 4096,
-        system: Some("You are helpful".to_string()),
+        system: Some(AnthropicSystem::Text("You are helpful".to_string())),
         temperature: Some(0.7),
         top_p: None,
         top_k: None,
         tools: None,
         tool_choice: None,
         metadata: None,
-        stream: None,
         thinking: None,
+        stream: None,
     };
 
     let json = serde_json::to_string(&request).unwrap();

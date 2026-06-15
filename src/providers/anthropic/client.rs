@@ -9,6 +9,7 @@ use reqwest::Client;
 use tracing::{info_span, instrument, Instrument};
 
 use super::types::*;
+use crate::provider::CacheHints;
 use crate::providers::error::{CompletionError, ProviderError};
 use crate::providers::http::build_http_client;
 use crate::providers::zai::client::{
@@ -40,6 +41,7 @@ struct AnthropicClientInner {
     max_tokens: Option<u64>,
     enable_thinking: bool,
     thinking_budget_tokens: Option<u64>,
+    prompt_caching: bool,
 }
 
 impl AnthropicClient {
@@ -70,6 +72,7 @@ pub struct AnthropicClientBuilder {
     max_tokens: Option<u64>,
     enable_thinking: bool,
     thinking_budget_tokens: Option<u64>,
+    prompt_caching: bool,
 }
 
 impl AnthropicClientBuilder {
@@ -84,6 +87,7 @@ impl AnthropicClientBuilder {
             max_tokens: None,
             enable_thinking: false,
             thinking_budget_tokens: None,
+            prompt_caching: true,
         }
     }
 
@@ -129,6 +133,17 @@ impl AnthropicClientBuilder {
         self
     }
 
+    /// Enable/disable explicit prompt-cache breakpoints (default: true).
+    ///
+    /// When enabled, the client translates the request's `CacheHints` into
+    /// `cache_control` markers on the system, tools, and tail messages. When
+    /// disabled — or when the request carries no hints — the wire body is
+    /// byte-identical to the pre-caching representation.
+    pub fn prompt_caching(mut self, enabled: bool) -> Self {
+        self.prompt_caching = enabled;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> AnthropicClient {
         AnthropicClient {
@@ -142,7 +157,100 @@ impl AnthropicClientBuilder {
                 max_tokens: self.max_tokens,
                 enable_thinking: self.enable_thinking,
                 thinking_budget_tokens: self.thinking_budget_tokens,
+                prompt_caching: self.prompt_caching,
             }),
+        }
+    }
+}
+
+/// Translate provider-independent [`CacheHints`] into Anthropic `cache_control`
+/// markers on the already-merged request structure.
+///
+/// Placement (≤3 of Anthropic's 4 allowed breakpoints):
+/// 1. `cache_system` → the static prefix: the system block if present, else the
+///    last tool (tools precede the system prompt in the cacheable prefix, so one
+///    marker there caches the whole tools+system head).
+/// 2. The last content block of the final message (the moving tail).
+/// 3. The last content block of the most recent *earlier* user message — the
+///    resilient breakpoint that matches the previous request's tail even when
+///    this turn appended several blocks.
+///
+/// Operates on the merged `Vec<AnthropicMessage>`, so it is robust to the
+/// consecutive-tool-result merge. A no-op when `hints` is empty.
+fn apply_cache_breakpoints(
+    system: &mut Option<AnthropicSystem>,
+    messages: &mut [AnthropicMessage],
+    tools: Option<&mut Vec<AnthropicTool>>,
+    hints: &CacheHints,
+) {
+    if hints.is_empty() {
+        return;
+    }
+
+    // 1. Static prefix: prefer the system block, fall back to the last tool.
+    if hints.cache_system {
+        match system {
+            Some(sys) => mark_system(sys),
+            None => {
+                if let Some(last_tool) = tools.and_then(|t| t.last_mut()) {
+                    last_tool.cache_control = Some(AnthropicCacheControl::ephemeral());
+                }
+            }
+        }
+    }
+
+    // 2 & 3. Moving tail breakpoints.
+    if !hints.breakpoints.is_empty() && !messages.is_empty() {
+        let last = messages.len() - 1;
+        mark_last_block(&mut messages[last]);
+        if let Some(prev_user) = messages[..last].iter().rposition(|m| m.role == "user") {
+            mark_last_block(&mut messages[prev_user]);
+        }
+    }
+}
+
+/// Attach a cache breakpoint to the system prompt, promoting a plain string to a
+/// single cache-marked text block if needed.
+fn mark_system(system: &mut AnthropicSystem) {
+    match system {
+        AnthropicSystem::Blocks(blocks) => {
+            if let Some(last) = blocks.last_mut() {
+                last.cache_control = Some(AnthropicCacheControl::ephemeral());
+            }
+        }
+        AnthropicSystem::Text(text) => {
+            *system = AnthropicSystem::Blocks(vec![AnthropicSystemBlock {
+                block_type: "text".to_string(),
+                text: std::mem::take(text),
+                cache_control: Some(AnthropicCacheControl::ephemeral()),
+            }]);
+        }
+    }
+}
+
+/// Attach a cache breakpoint to the last cache-eligible content block of a
+/// message (skipping `thinking` blocks, which the API forbids marking).
+/// Promotes a plain `Text` content to a single cache-marked block if needed.
+fn mark_last_block(message: &mut AnthropicMessage) {
+    match &mut message.content {
+        AnthropicContent::Blocks(blocks) => {
+            for block in blocks.iter_mut().rev() {
+                match block {
+                    AnthropicContentBlock::Text { cache_control, .. }
+                    | AnthropicContentBlock::ToolUse { cache_control, .. }
+                    | AnthropicContentBlock::ToolResult { cache_control, .. } => {
+                        *cache_control = Some(AnthropicCacheControl::ephemeral());
+                        return;
+                    }
+                    AnthropicContentBlock::Thinking { .. } => continue,
+                }
+            }
+        }
+        AnthropicContent::Text(text) => {
+            message.content = AnthropicContent::Blocks(vec![AnthropicContentBlock::Text {
+                text: std::mem::take(text),
+                cache_control: Some(AnthropicCacheControl::ephemeral()),
+            }]);
         }
     }
 }
@@ -173,8 +281,9 @@ impl AnthropicCompletionModel {
     ) -> Result<CompletionResponse<AnthropicResponse>, CompletionError> {
         let inner = &self.client.inner;
 
-        // Extract system message from preamble
-        let system = request.preamble.clone();
+        // Extract system message from preamble. Plain `Text` by default — only
+        // promoted to cache-marked blocks below when caching is active.
+        let mut system = request.preamble.clone().map(AnthropicSystem::Text);
 
         // Convert messages, merging consecutive tool results into a single user message.
         // The Anthropic API requires all tool_result blocks for a multi-tool-call assistant
@@ -188,6 +297,7 @@ impl AnthropicCompletionModel {
                     tool_use_id: tool_call_id.clone(),
                     content: msg.content.clone(),
                     is_error: None,
+                    cache_control: None,
                 };
 
                 if let Some(last) = messages.last_mut() {
@@ -231,6 +341,7 @@ impl AnthropicCompletionModel {
                 if !msg.content.is_empty() {
                     blocks.push(AnthropicContentBlock::Text {
                         text: msg.content.clone(),
+                        cache_control: None,
                     });
                 }
 
@@ -241,6 +352,7 @@ impl AnthropicCompletionModel {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
                         input,
+                        cache_control: None,
                     });
                 }
 
@@ -251,6 +363,7 @@ impl AnthropicCompletionModel {
                 if !msg.content.is_empty() {
                     blocks.push(AnthropicContentBlock::Text {
                         text: msg.content.clone(),
+                        cache_control: None,
                     });
                 }
                 AnthropicContent::Blocks(blocks)
@@ -264,7 +377,7 @@ impl AnthropicCompletionModel {
 
         // Build tools (always send array, even if empty)
         // Ensure each tool's input_schema has a "properties" field (required by some APIs)
-        let tools = Some(
+        let mut tools = Some(
             request
                 .tools
                 .iter()
@@ -278,10 +391,18 @@ impl AnthropicCompletionModel {
                         name: t.name.clone(),
                         description: t.description.clone(),
                         input_schema: schema,
+                        cache_control: None,
                     }
                 })
                 .collect(),
         );
+
+        // Translate provider-independent cache hints into Anthropic
+        // `cache_control` markers on the merged structure. No-op (byte-identical
+        // wire body) when caching is disabled or the request carries no hints.
+        if inner.prompt_caching {
+            apply_cache_breakpoints(&mut system, &mut messages, tools.as_mut(), &request.cache);
+        }
 
         let max_tokens = request
             .max_tokens
@@ -672,4 +793,159 @@ fn process_sse_event(
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn text_msg(role: &str, text: &str) -> AnthropicMessage {
+        AnthropicMessage {
+            role: role.to_string(),
+            content: AnthropicContent::Text(text.to_string()),
+        }
+    }
+
+    fn has_cache_control_json<T: serde::Serialize>(v: &T) -> bool {
+        serde_json::to_string(v).unwrap().contains("cache_control")
+    }
+
+    /// With no hints requested, the function is a no-op and nothing serializes a
+    /// `cache_control` key — i.e. byte-identical to the pre-caching wire body.
+    #[test]
+    fn empty_hints_is_noop() {
+        let mut system = Some(AnthropicSystem::Text("sys".into()));
+        let mut messages = vec![text_msg("user", "hi"), text_msg("assistant", "yo")];
+        let mut tools = vec![AnthropicTool {
+            name: "t".into(),
+            description: "d".into(),
+            input_schema: serde_json::json!({}),
+            cache_control: None,
+        }];
+        apply_cache_breakpoints(
+            &mut system,
+            &mut messages,
+            Some(&mut tools),
+            &CacheHints::default(),
+        );
+
+        assert!(
+            matches!(system, Some(AnthropicSystem::Text(_))),
+            "system must stay a plain string"
+        );
+        assert!(!has_cache_control_json(&system));
+        assert!(!has_cache_control_json(&messages));
+        assert!(!has_cache_control_json(&tools));
+    }
+
+    /// A `Text` content block with `cache_control: None` serializes without the
+    /// key (the safety property that keeps caching-off output unchanged).
+    #[test]
+    fn unmarked_block_omits_cache_control_key() {
+        let block = AnthropicContentBlock::Text {
+            text: "x".into(),
+            cache_control: None,
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(
+            !json.contains("cache_control"),
+            "unmarked block must omit cache_control: {json}"
+        );
+    }
+
+    /// `cache_system` marks the system prefix and the two tail breakpoints land
+    /// on the final message and the most recent earlier user message.
+    #[test]
+    fn marks_system_and_tail() {
+        let mut system = Some(AnthropicSystem::Text("sys".into()));
+        let mut messages = vec![
+            text_msg("user", "first"),    // 0: earlier user -> should be marked
+            text_msg("assistant", "mid"), // 1
+            text_msg("user", "last"),     // 2: final -> should be marked
+        ];
+        let hints = CacheHints {
+            cache_system: true,
+            breakpoints: vec![2],
+        };
+        apply_cache_breakpoints(&mut system, &mut messages, None, &hints);
+
+        // System promoted to a marked block.
+        assert!(matches!(system, Some(AnthropicSystem::Blocks(_))));
+        assert!(has_cache_control_json(&system));
+        // Final message + earlier user marked; the assistant in between is not.
+        assert!(
+            has_cache_control_json(&messages[2]),
+            "final message must be marked"
+        );
+        assert!(
+            has_cache_control_json(&messages[0]),
+            "penultimate user must be marked"
+        );
+        assert!(
+            !has_cache_control_json(&messages[1]),
+            "the assistant between them must not be marked"
+        );
+    }
+
+    /// `mark_last_block` never marks a `thinking` block; it marks the last
+    /// cache-eligible (text/tool) block instead.
+    #[test]
+    fn never_marks_thinking_block() {
+        let mut msg = AnthropicMessage {
+            role: "assistant".into(),
+            content: AnthropicContent::Blocks(vec![
+                AnthropicContentBlock::Text {
+                    text: "reasoned answer".into(),
+                    cache_control: None,
+                },
+                AnthropicContentBlock::Thinking {
+                    thinking: "secret".into(),
+                },
+            ]),
+        };
+        mark_last_block(&mut msg);
+        let json = serde_json::to_string(&msg).unwrap();
+        // The text block carries the marker; the thinking block must not.
+        if let AnthropicContent::Blocks(blocks) = &msg.content {
+            let text_marked = matches!(
+                &blocks[0],
+                AnthropicContentBlock::Text {
+                    cache_control: Some(_),
+                    ..
+                }
+            );
+            let thinking_marked = matches!(&blocks[1], AnthropicContentBlock::Thinking { .. })
+                && json.matches("cache_control").count() == 1;
+            assert!(text_marked, "text block should be marked");
+            assert!(
+                thinking_marked,
+                "exactly one marker, on the text block, not the thinking block"
+            );
+        } else {
+            panic!("expected blocks");
+        }
+    }
+
+    /// Empty hints leave a plain-string system untouched (no promotion to blocks).
+    #[test]
+    fn no_system_falls_back_to_tools() {
+        let mut system: Option<AnthropicSystem> = None;
+        let mut messages = vec![text_msg("user", "hi")];
+        let mut tools = vec![AnthropicTool {
+            name: "t".into(),
+            description: "d".into(),
+            input_schema: serde_json::json!({}),
+            cache_control: None,
+        }];
+        let hints = CacheHints {
+            cache_system: true,
+            breakpoints: vec![],
+        };
+        apply_cache_breakpoints(&mut system, &mut messages, Some(&mut tools), &hints);
+        // With no system prompt, the static-prefix marker lands on the last tool.
+        assert!(
+            has_cache_control_json(&tools),
+            "tool must carry the static-prefix marker when there is no system"
+        );
+    }
 }

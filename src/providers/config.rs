@@ -77,6 +77,14 @@ pub trait LlmConfigLike {
         None
     }
 
+    /// Enable explicit prompt-cache breakpoints for providers with an explicit
+    /// cache protocol (Anthropic, MiniMax). `None` keeps the provider default
+    /// (Anthropic on, MiniMax off). Ignored by implicit-cache providers, which
+    /// benefit from an append-only message prefix without any wire markers.
+    fn prompt_caching(&self) -> Option<bool> {
+        None
+    }
+
     // --- OpenRouter-specific ---
 
     /// Providers to exclude/blacklist (OpenRouter: provider.ignore)

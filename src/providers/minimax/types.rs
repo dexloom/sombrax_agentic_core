@@ -2,6 +2,49 @@
 
 use serde::{Deserialize, Serialize};
 
+/// MiniMax prompt-cache control marker (`{"type": "ephemeral"}`),
+/// Anthropic-compatible.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MinimaxCacheControl {
+    /// Cache type — always `"ephemeral"`.
+    #[serde(rename = "type")]
+    pub cache_type: String,
+}
+
+impl MinimaxCacheControl {
+    /// The 5-minute ephemeral cache breakpoint.
+    pub fn ephemeral() -> Self {
+        Self {
+            cache_type: "ephemeral".to_string(),
+        }
+    }
+}
+
+/// MiniMax system prompt — a plain string, or text blocks that can carry a
+/// cache_control marker. Serializes untagged; `Text` is byte-identical to the
+/// previous `Option<String>` representation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum MinimaxSystem {
+    /// Plain system string (default, no caching).
+    Text(String),
+    /// System as text blocks (used to attach a cache_control marker).
+    Blocks(Vec<MinimaxSystemBlock>),
+}
+
+/// A system text block (`{"type":"text","text":...,"cache_control"?:...}`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MinimaxSystemBlock {
+    /// Block type — always `"text"`.
+    #[serde(rename = "type")]
+    pub block_type: String,
+    /// System text payload.
+    pub text: String,
+    /// Optional cache breakpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<MinimaxCacheControl>,
+}
+
 /// MiniMax Messages API request (Anthropic-compatible)
 #[derive(Debug, Clone, Serialize)]
 pub struct MinimaxRequest {
@@ -13,7 +56,7 @@ pub struct MinimaxRequest {
     pub max_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Optional system prompt.
-    pub system: Option<String>,
+    pub system: Option<MinimaxSystem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Sampling temperature.
     pub temperature: Option<f64>,
@@ -99,7 +142,7 @@ impl MinimaxContent {
             MinimaxContent::Blocks(blocks) => blocks
                 .iter()
                 .filter_map(|b| match b {
-                    MinimaxContentBlock::Text { text } => Some(text.clone()),
+                    MinimaxContentBlock::Text { text, .. } => Some(text.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -117,9 +160,12 @@ pub enum MinimaxContentBlock {
     Text {
         /// Text payload.
         text: String,
+        /// Optional cache breakpoint (skipped when `None`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<MinimaxCacheControl>,
     },
     #[serde(rename = "thinking")]
-    /// Reasoning/thinking block.
+    /// Reasoning/thinking block. Never carries cache_control.
     Thinking {
         /// Thinking payload.
         thinking: String,
@@ -133,6 +179,9 @@ pub enum MinimaxContentBlock {
         name: String,
         /// Tool input payload.
         input: serde_json::Value,
+        /// Optional cache breakpoint.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<MinimaxCacheControl>,
     },
     #[serde(rename = "tool_result")]
     /// Tool result block.
@@ -144,6 +193,9 @@ pub enum MinimaxContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         /// Indicates the tool returned an error.
         is_error: Option<bool>,
+        /// Optional cache breakpoint.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<MinimaxCacheControl>,
     },
 }
 
@@ -156,6 +208,9 @@ pub struct MinimaxTool {
     pub description: String,
     /// Tool input schema.
     pub input_schema: serde_json::Value,
+    /// Optional cache breakpoint (marks the tools+system prefix).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<MinimaxCacheControl>,
 }
 
 /// MiniMax tool choice

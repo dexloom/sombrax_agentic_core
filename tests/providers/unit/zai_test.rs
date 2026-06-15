@@ -101,6 +101,7 @@ fn test_completion_request_with_messages() {
         temperature: Some(0.7),
         max_tokens: Some(1000),
         additional_params: None,
+        cache: Default::default(),
     };
 
     assert_eq!(

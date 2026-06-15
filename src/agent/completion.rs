@@ -106,7 +106,10 @@ impl<'a, M: CompletionModel> AgentCompletion<'a, M> {
             temperature: self.temperature,
             max_tokens: self.max_tokens,
             additional_params: self.additional_params.clone(),
+            cache: self.agent.compute_cache_hints(&messages),
         };
+        // Cache high-water mark: messages sent in the previous request.
+        let mut last_sent_len = request.messages.len();
 
         // Send to model and record metrics (FR-021)
         let mut response = match self.agent.model.completion(request).await {
@@ -187,11 +190,14 @@ impl<'a, M: CompletionModel> AgentCompletion<'a, M> {
                 messages.push(tool_result_message);
             }
 
-            // Re-optimize context if needed
+            // Re-optimize context if needed, passing the cache high-water mark.
             if let Some(optimizer) = &self.agent.optimizer {
-                messages = optimizer
-                    .optimize(messages, &self.agent.optimization_config)
-                    .await;
+                let opt_config = self
+                    .agent
+                    .optimization_config
+                    .clone()
+                    .last_sent_len(last_sent_len);
+                messages = optimizer.optimize(messages, &opt_config).await;
             }
 
             // Build the next completion request
@@ -202,7 +208,9 @@ impl<'a, M: CompletionModel> AgentCompletion<'a, M> {
                 temperature: self.temperature,
                 max_tokens: self.max_tokens,
                 additional_params: self.additional_params.clone(),
+                cache: self.agent.compute_cache_hints(&messages),
             };
+            last_sent_len = request.messages.len();
 
             // Send to model again and record metrics
             response = match self.agent.model.completion(request).await {

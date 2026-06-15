@@ -3420,6 +3420,7 @@ You are a helpful assistant.
             temperature: None,
             max_tokens: None,
             additional_params: None,
+            cache: Default::default(),
         };
 
         let mlxlm_request = model.build_glm_request(&request, &client.inner);

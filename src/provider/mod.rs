@@ -108,6 +108,39 @@ impl std::ops::AddAssign for Usage {
     }
 }
 
+/// Provider-independent prompt-cache hints for a completion request.
+///
+/// These express *intent* — "this prefix is stable, cache it" — without
+/// committing to any provider's wire format. Providers with an explicit cache
+/// protocol (Anthropic-style `cache_control` breakpoints) translate these into
+/// markers; providers that cache implicitly on prefix match (OpenAI-style)
+/// simply ignore them and benefit from a stable, append-only message prefix.
+///
+/// The agent loop populates this from its own knowledge of which messages were
+/// already sent (the high-water mark). Optimizers keep the prefix below that
+/// mark byte-identical between deliberate compaction points, so the cached
+/// prefix stays valid turn-to-turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheHints {
+    /// Request a cache breakpoint covering the system preamble + tool
+    /// definitions block (the static prefix that never changes within a run).
+    pub cache_system: bool,
+
+    /// Indices into `CompletionRequest.messages` after which a cache
+    /// breakpoint is requested. Providers translate each index to the last
+    /// content block of the corresponding (post-merge) message. Implicit-cache
+    /// providers ignore this field entirely. Indices that fall out of range
+    /// after provider-side message merging are skipped, not errors.
+    pub breakpoints: Vec<usize>,
+}
+
+impl CacheHints {
+    /// True when no caching is requested (the default / disabled state).
+    pub fn is_empty(&self) -> bool {
+        !self.cache_system && self.breakpoints.is_empty()
+    }
+}
+
 /// Completion request sent to provider
 #[derive(Debug, Clone, Default)]
 pub struct CompletionRequest {
@@ -128,6 +161,9 @@ pub struct CompletionRequest {
 
     /// Provider-specific parameters
     pub additional_params: Option<serde_json::Value>,
+
+    /// Provider-independent prompt-cache hints. Default is empty (no caching).
+    pub cache: CacheHints,
 }
 
 impl CompletionRequest {
